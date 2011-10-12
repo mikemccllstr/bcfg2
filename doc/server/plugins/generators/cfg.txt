@@ -200,5 +200,20 @@ File permissions
 ================
 
 File permissions for entries handled by Cfg are controlled via the use
-of :ref:`server-info` files. Note that you **cannot** use both a
-Permissions entry and a Path entry to handle the same file.
+of :ref:`server-info` files.
+
+.. note::
+
+   You **cannot** use both a Permissions entry and a Path entry to
+   handle the same file.
+
+The group and host-specific suffixes described above can also be used
+for files named ``info``. So for example, to set different owners for
+a file named ``/etc/sample``, the ``Cfg/etc/sample/`` directory could
+contain entries like the following::
+
+    info.G10_most-servers
+    info.G30_special-servers
+    sample.G10_most-servers
+    sample.G30_special-servers
+

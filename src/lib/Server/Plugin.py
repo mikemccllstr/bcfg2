@@ -995,6 +995,22 @@ class EntrySet:
             kwargs['delta'] = data.group('delta')
         return Specificity(**kwargs)
 
+    def copy_infofile_to_metadata(self, infofilepath):
+        """Copy the contents of an info file into the metadata dict."""
+        for line in open(infofilepath).readlines():
+            match = info_regex.match(line)
+            if not match:
+                logger.warning("Failed to match line in %s: %s" % (fpath,
+                                                                   line))
+                continue
+            else:
+                mgd = match.groupdict()
+                for key, value in mgd.items():
+                    if value:
+                        self.metadata[key] = value
+                if len(self.metadata['perms']) == 3:
+                    self.metadata['perms'] = "0%s" % (self.metadata['perms'])
+
     def update_metadata(self, event):
         """Process info and info.xml files for the templates."""
         fpath = "%s/%s" % (self.path, event.filename)
@@ -1003,20 +1019,7 @@ class EntrySet:
                 self.infoxml = InfoXML(fpath, True)
             self.infoxml.HandleEvent(event)
         elif event.filename in [':info', 'info']:
-            for line in open(fpath).readlines():
-                match = info_regex.match(line)
-                if not match:
-                    logger.warning("Failed to match line in %s: %s" % (fpath,
-                                                                       line))
-                    continue
-                else:
-                    mgd = match.groupdict()
-                    for key, value in list(mgd.items()):
-                        if value:
-                            self.metadata[key] = value
-                    if len(self.metadata['perms']) == 3:
-                        self.metadata['perms'] = "0%s" % \
-                                                 (self.metadata['perms'])
+            self.copy_infofile_to_metadata(fpath)
 
     def reset_metadata(self, event):
         """Reset metadata to defaults if info or info.xml removed."""

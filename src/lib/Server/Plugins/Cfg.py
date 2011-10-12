@@ -88,6 +88,7 @@ class CfgMatcher:
     def __init__(self, fname):
         name = re.escape(fname)
         self.basefile_reg = re.compile('^(?P<basename>%s)(|\\.H_(?P<hostname>\S+?)|.G(?P<prio>\d+)_(?P<group>\S+?))((?P<genshi>\\.genshi)|(?P<cheetah>\\.cheetah))?$' % name)
+        self.info_reg = re.compile('^(?P<basename>info)(\\.H_(?P<hostname>\S+?)|.G(?P<prio>\d+)_(?P<group>\S+?))$')
         self.delta_reg = re.compile('^(?P<basename>%s)(|\\.H_(?P<hostname>\S+)|\\.G(?P<prio>\d+)_(?P<group>\S+))\\.(?P<delta>(cat|diff))$' % name)
         self.cat_count = fname.count(".cat")
         self.diff_count = fname.count(".diff")
@@ -96,6 +97,8 @@ class CfgMatcher:
         if fname.count(".cat") > self.cat_count \
                or fname.count('.diff') > self.diff_count:
             return self.delta_reg.match(fname)
+        if self.info_reg.match(fname):
+            return self.info_reg.match(fname)
         return self.basefile_reg.match(fname)
 
 
@@ -105,33 +108,69 @@ class CfgEntrySet(Bcfg2.Server.Plugin.EntrySet):
         Bcfg2.Server.Plugin.EntrySet.__init__(self, basename, path,
                                               entry_type, encoding)
         self.specific = CfgMatcher(path.split('/')[-1])
-        path = path
 
     def sort_by_specific(self, one, other):
         return cmp(one.specific, other.specific)
 
-    def get_pertinent_entries(self, entry, metadata):
+    def get_pertinent_entries(self, entry, metadata, basename, missing_ok=False):
         """return a list of all entries pertinent
         to a client => [base, delta1, delta2]
+
+        :param metadata: Client metadata to use in matching.
+
+        :param basename: Name to filter for, within the entry
+        set. File data comes from entry names that match the
+        containing directory name. File attributes can come from
+        entries with the name 'info'.
         """
-        matching = [ent for ent in list(self.entries.values()) if \
-                    ent.specific.matches(metadata)]
+        matching = []
+        for (name, ent) in self.entries.items():
+            if name.startswith(basename) and ent.specific.matches(metadata):
+                matching.append(ent)
         matching.sort(key=operator.attrgetter('specific'))
         # base entries which apply to a client
         # (e.g. foo, foo.G##_groupname, foo.H_hostname)
         base_files = [matching.index(m) for m in matching
                       if not m.specific.delta]
         if not base_files:
-            logger.error("No base file found for %s" % entry.get('name'))
-            raise Bcfg2.Server.Plugin.PluginExecutionError
+            if missing_ok:
+                return []
+            else:
+                logger.error("No base file found for %s" % entry.get('name'))
+                raise Bcfg2.Server.Plugin.PluginExecutionError
         base = min(base_files)
         used = matching[:base + 1]
         used.reverse()
         return used
 
+    def bind_info_to_entry(self, entry, metadata):
+        # first set defaults from global metadata/:info
+        for key in self.metadata:
+            entry.set(key, self.metadata[key])
+        if self.infoxml:
+            mdata = {}
+            self.infoxml.pnode.Match(metadata, mdata, entry=entry)
+            if 'Info' not in mdata:
+                logger.error("Failed to set metadata for file %s" % \
+                             (entry.get('name')))
+                raise PluginExecutionError
+            [entry.attrib.__setitem__(key, value) \
+             for (key, value) in list(mdata['Info'][None].items())]
+        else:
+            avail = self.get_pertinent_entries(entry, metadata, 'info',
+                                               missing_ok=True)
+            if len(avail) > 0:
+                # NOTE, the avail[0] object is a SpecificData
+                # instance, and as such it should already have a copy
+                # of the files current contents as .data. Could
+                # optimize this to take advantage of that.
+                self.copy_infofile_to_metadata(avail[0].name)
+                for key in self.metadata:
+                    entry.set(key, self.metadata[key])
+
     def bind_entry(self, entry, metadata):
         self.bind_info_to_entry(entry, metadata)
-        used = self.get_pertinent_entries(entry, metadata)
+        used = self.get_pertinent_entries(entry, metadata, os.path.basename(self.path))
         basefile = used.pop(0)
         if entry.get('perms').lower() == 'inherit':
             # use on-disk permissions
